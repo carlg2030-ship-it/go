@@ -29,6 +29,20 @@
   .rp-scroller::-webkit-scrollbar { display: none; }
   .rp-scroller { -ms-overflow-style: none; scrollbar-width: none; }
 </style>
+<script>
+  window.addEventListener('error', function (e) {
+    var el = document.getElementById('rp-fatal-error');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'rp-fatal-error';
+      el.style.cssText = 'position:fixed;inset:0;background:#12151B;color:#E08080;font-family:monospace;font-size:13px;padding:24px;z-index:9999;white-space:pre-wrap;';
+      document.body.appendChild(el);
+    }
+    el.textContent = 'Ranked Priority failed to load.\n\nError: ' + (e.message || 'unknown') +
+      '\nFile: ' + (e.filename || 'unknown') + ':' + (e.lineno || '?') +
+      '\n\nThis usually means a script was blocked (ad blocker, content filter, or offline) or the page was embedded inside another page instead of loaded directly.';
+  });
+</script>
 </head>
 <body>
 <div id="root"></div>
@@ -166,6 +180,13 @@ function RankedPriority() {
   const [saveStatus, setSaveStatus] = useState(null);
   const scrollerRef = useRef(null);
   const fileInputRef = useRef(null);
+  const [uploadTarget, setUploadTarget] = useState(null);
+
+  const triggerPhotoUpload = (code) => {
+    setUploadTarget(code);
+    // wait a tick so state is set before the click handler reads it
+    setTimeout(() => fileInputRef.current?.click(), 0);
+  };
 
   const [syncStatus, setSyncStatus] = useState(null); // 'server' | 'local' | null
 
@@ -224,37 +245,69 @@ function RankedPriority() {
     setExpanded((prev) => ({ ...prev, [`${code}-${idx}`]: !prev[`${code}-${idx}`] }));
   };
 
-  const compressImage = (file, maxWidth = 900, quality = 0.72) =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error("read failed"));
-      reader.onload = () => {
-        const img = new Image();
-        img.onerror = () => reject(new Error("decode failed"));
-        img.onload = () => {
-          const scale = Math.min(1, maxWidth / img.width);
-          const canvas = document.createElement("canvas");
-          canvas.width = Math.round(img.width * scale);
-          canvas.height = Math.round(img.height * scale);
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL("image/jpeg", quality));
-        };
-        img.src = reader.result;
-      };
-      reader.readAsDataURL(file);
-    });
+  const compressImage = (file, maxWidth = 900, quality = 0.72) => {
+    const withTimeout = (promise, ms, label) =>
+      Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error(label + " timed out")), ms)),
+      ]);
 
-  const handlePhotoUpload = async (code, e) => {
+    const viaBitmap = async () => {
+      const bitmap = await createImageBitmap(file);
+      const scale = Math.min(1, maxWidth / bitmap.width);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close && bitmap.close();
+      return canvas.toDataURL("image/jpeg", quality);
+    };
+
+    const viaFileReader = () =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("file read failed"));
+        reader.onload = () => {
+          const img = new Image();
+          img.onerror = () => reject(new Error("image decode failed"));
+          img.onload = () => {
+            const scale = Math.min(1, maxWidth / img.width);
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(1, Math.round(img.width * scale));
+            canvas.height = Math.max(1, Math.round(img.height * scale));
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL("image/jpeg", quality));
+          };
+          img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+      });
+
+    // Prefer createImageBitmap - avoids building a huge base64 string for
+    // large Photos-library originals, which is what was likely hanging
+    // on mobile. Fall back to the FileReader method if unsupported.
+    if (typeof createImageBitmap === "function") {
+      return withTimeout(viaBitmap(), 12000, "Photo processing").catch(() =>
+        withTimeout(viaFileReader(), 12000, "Photo processing")
+      );
+    }
+    return withTimeout(viaFileReader(), 12000, "Photo processing");
+  };
+
+  const handlePhotoUpload = async (e) => {
+    const code = uploadTarget;
     const file = e.target.files?.[0];
-    if (!file) return;
+    e.target.value = ""; // reset so selecting the same file again still fires onChange
+    if (!file || !code) return;
     try {
       const dataUrl = await compressImage(file);
       setCoverPhoto((prev) => ({ ...prev, [code]: dataUrl }));
       const ok = await rpSet(`photo:${code}`, dataUrl);
-      flash(ok, ok ? "Photo saved" : "Saved locally — will sync when online");
-    } catch {
-      flash(false, "Could not read that photo");
+      flash(ok, ok ? `Photo saved to ${code}` : "Saved locally — will sync when online");
+    } catch (err) {
+      flash(false, `Photo failed: ${err?.message || "unknown error"} — try a smaller photo or take a new one`);
     }
   };
 
@@ -353,8 +406,7 @@ function RankedPriority() {
                   {tab === "cover" && (
                     <div className="flex flex-col gap-5">
                       <div>
-                        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handlePhotoUpload(p.code, e)} />
-                        <button onClick={() => fileInputRef.current?.click()} className="w-full rounded-sm overflow-hidden relative flex items-center justify-center" style={{ aspectRatio: "2 / 1", background: photo ? "transparent" : "#12151B", border: "1px dashed #3A4552" }}>
+                        <button onClick={() => triggerPhotoUpload(p.code)} className="w-full rounded-sm overflow-hidden relative flex items-center justify-center" style={{ aspectRatio: "2 / 1", background: photo ? "transparent" : "#12151B", border: "1px dashed #3A4552" }}>
                           {photo ? (
                             <img src={photo} alt={`${p.name} cover`} className="w-full h-full object-cover" />
                           ) : (
@@ -432,6 +484,8 @@ function RankedPriority() {
           );
         })}
       </div>
+
+      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
 
       <div className="flex items-center justify-center gap-2 py-4 shrink-0">
         {PROJECTS.map((p, i) => (
