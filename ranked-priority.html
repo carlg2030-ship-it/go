@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<title>Ranked Priority</title>
+
+<!-- Home screen / PWA-style meta -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Ranked Priority" />
+<meta name="theme-color" content="#12151B" />
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%2312151B'/%3E%3Crect x='20' y='20' width='60' height='60' fill='%23C89B3C'/%3E%3Ctext x='50' y='62' font-size='30' text-anchor='middle' fill='%2312151B' font-family='monospace' font-weight='bold'%3ERP%3C/text%3E%3C/svg%3E" />
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- Supabase JS client -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  html, body { margin: 0; padding: 0; background: #12151B; overscroll-behavior: none; }
+  .rp-display { font-family: 'Space Grotesk', sans-serif; }
+  .rp-mono { font-family: 'JetBrains Mono', monospace; }
+  .rp-notes { font-family: 'Source Serif 4', Georgia, serif; }
+  .rp-scroller::-webkit-scrollbar { display: none; }
+  .rp-scroller { -ms-overflow-style: none; scrollbar-width: none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useRef, useCallback, useEffect } = React;
+
+const PROJECTS = [
+  {
+    code: "AWAI",
+    priority: 1,
+    rank: 1,
+    name: "Advanced Websites",
+    objective: "$1,000,000 collected — 30-day window ending Day 100",
+    description:
+      "AdvancedWebsites.ai is a fixed-price website studio built on a proven, self-running engine — seven modular capability suites, no hourly billing, and a delivery factory that has already produced dozens of high-quality builds. The objective is to scale sales through a 25-rep 1099 field organization, pods and buddies included, to $1,000,000 collected within a 30-day window ending Day 100.",
+    bullets: [
+      "$1M collected, 30-day window, Day 100",
+      "25 reps: 20 productive, 5 attrition",
+      "Reps earn 35% comm + 5% expense",
+      "Pod Mgr 7% + 1%, every 10th rep",
+      "Buddy 3% flat, 1 per 20 reps",
+      "Factory: 10 producers, ~$600/site",
+      "KR0 build starts Monday, Aug 24",
+      "Delivery windows buffered 30–40 days",
+    ],
+  },
+  {
+    code: "AISE",
+    priority: 1,
+    rank: 2,
+    name: "AI Sales Engine",
+    objective: "100 RIR/day, self-sustaining — zero paid media, Week 8",
+    description:
+      "AI Sales Engine's growth funnel puts the free Revenue Intelligence Report to work as pure top-of-funnel volume, converting into the paid Revenue Growth Blueprint. Zero paid media — growth compounds through cold outreach, SEO content, partners, referrals, community, and earned PR, scaling to a self-sustaining 100 reports a day.",
+    bullets: [
+      "North Star: 100 RIR/day by Week 8",
+      "Zero paid media spend, ever",
+      "Seven compounding channels drive growth",
+      "Build phase: 14 days, zero pressure",
+      "No single channel above 40%",
+      "Free RIR feeds paid Blueprint",
+      "Day 1 reset to today",
+    ],
+  },
+  {
+    code: "GHL",
+    priority: 1,
+    rank: 3,
+    name: "Learn GoHighLevel",
+    objective: "20-hour Operator Mastery — 10 days, 2 hrs/day",
+    description:
+      "A self-built, 20-hour GoHighLevel Operator Mastery course — ten days, two hours a day — that doubles as direct implementation of the email, CRM, and social systems the companies will run on. Fluency here lands right as AWAI's build depends on the same platform.",
+    bullets: [
+      "10 days × 2 hrs = 20 hrs total",
+      "Days 1–3: email fundamentals",
+      "Days 4–6: CRM architecture",
+      "Days 7–8: social media",
+      "Day 9: reporting & KPIs",
+      "Day 10: dashboards + capstone",
+      "Day 1 reset to today",
+    ],
+  },
+];
+
+const priorityLabel = (p) => (p === 1 ? "P1" : `P${p}`);
+const rankLabel = (r) => {
+  const suffix = r === 1 ? "st" : r === 2 ? "nd" : r === 3 ? "rd" : "th";
+  return `${r}${suffix}`;
+};
+const todayStr = () =>
+  new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+const nowStamp = () =>
+  new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+// --- SUPABASE CONFIG ---
+const SUPABASE_URL = "https://jlevjdiazhvglokdgifo.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_S4y-ZTHoE_pAoxWvpHD2yg_8Qhb9rvh";
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const TABLE = "ranked_priority";
+
+const LS_PREFIX = "rankedPriority:";
+const lsGetCache = (key, fallback) => {
+  try {
+    const raw = localStorage.getItem(LS_PREFIX + key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+const lsSetCache = (key, value) => {
+  try {
+    localStorage.setItem(LS_PREFIX + key, JSON.stringify(value));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+// Reads from Supabase first; falls back to local cache if offline.
+const rpGet = async (key, fallback) => {
+  try {
+    const { data, error } = await sb.from(TABLE).select("value").eq("key", key).maybeSingle();
+    if (error) throw error;
+    const value = data ? data.value : fallback;
+    lsSetCache(key, value);
+    return { value, fromServer: true };
+  } catch {
+    return { value: lsGetCache(key, fallback), fromServer: false };
+  }
+};
+
+// Writes to Supabase and local cache together.
+const rpSet = async (key, value) => {
+  lsSetCache(key, value);
+  try {
+    const { error } = await sb.from(TABLE).upsert({ key, value, updated_at: new Date().toISOString() });
+    if (error) throw error;
+    return true;
+  } catch {
+    return false; // saved locally at least; will not sync to other devices yet
+  }
+};
+
+function RankedPriority() {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [tab, setTab] = useState("cover");
+  const [showAll, setShowAll] = useState(false);
+  const [bulletState, setBulletState] = useState({});
+  const [expanded, setExpanded] = useState({});
+  const [coverPhoto, setCoverPhoto] = useState({});
+  const [journal, setJournal] = useState({});
+  const [journalDraft, setJournalDraft] = useState({});
+  const [saveStatus, setSaveStatus] = useState(null);
+  const scrollerRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  const [syncStatus, setSyncStatus] = useState(null); // 'server' | 'local' | null
+
+  useEffect(() => {
+    (async () => {
+      const bs = {}, photos = {}, journals = {};
+      let anyFromServer = false;
+      for (const p of PROJECTS) {
+        const b = await rpGet(`bullets:${p.code}`, {});
+        const ph = await rpGet(`photo:${p.code}`, null);
+        const j = await rpGet(`journal:${p.code}`, []);
+        bs[p.code] = b.value;
+        photos[p.code] = ph.value;
+        journals[p.code] = j.value;
+        if (b.fromServer || ph.fromServer || j.fromServer) anyFromServer = true;
+      }
+      setBulletState(bs);
+      setCoverPhoto(photos);
+      setJournal(journals);
+      setSyncStatus(anyFromServer ? "server" : "local");
+      if (!anyFromServer) {
+        flash(false, "Offline or sync not reachable — showing data cached on this device");
+      }
+    })();
+  }, []);
+
+  const flash = (ok, msg) => {
+    setSaveStatus({ ok, msg });
+    setTimeout(() => setSaveStatus(null), ok ? 1200 : 3500);
+  };
+
+  const toggleDone = async (code, idx) => {
+    const projState = { ...(bulletState[code] || {}) };
+    const cur = projState[idx] || { done: false, doneDate: null, notes: "" };
+    const nowDone = !cur.done;
+    projState[idx] = { ...cur, done: nowDone, doneDate: nowDone ? todayStr() : null };
+    setBulletState((prev) => ({ ...prev, [code]: projState }));
+    const ok = await rpSet(`bullets:${code}`, projState);
+    flash(ok, ok ? "Saved" : "Saved locally — will sync when online");
+  };
+
+  const updateNotesLocal = (code, idx, text) => {
+    setBulletState((prev) => {
+      const projState = { ...(prev[code] || {}) };
+      const cur = projState[idx] || { done: false, doneDate: null, notes: "" };
+      projState[idx] = { ...cur, notes: text };
+      return { ...prev, [code]: projState };
+    });
+  };
+  const persistNotes = async (code, idx) => {
+    const projState = bulletState[code] || {};
+    await rpSet(`bullets:${code}`, projState);
+  };
+
+  const toggleExpand = (code, idx) => {
+    setExpanded((prev) => ({ ...prev, [`${code}-${idx}`]: !prev[`${code}-${idx}`] }));
+  };
+
+  const compressImage = (file, maxWidth = 900, quality = 0.72) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("read failed"));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error("decode failed"));
+        img.onload = () => {
+          const scale = Math.min(1, maxWidth / img.width);
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", quality));
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+  const handlePhotoUpload = async (code, e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await compressImage(file);
+      setCoverPhoto((prev) => ({ ...prev, [code]: dataUrl }));
+      const ok = await rpSet(`photo:${code}`, dataUrl);
+      flash(ok, ok ? "Photo saved" : "Saved locally — will sync when online");
+    } catch {
+      flash(false, "Could not read that photo");
+    }
+  };
+
+  const addJournalEntry = async (code) => {
+    const text = (journalDraft[code] || "").trim();
+    if (!text) return;
+    const entries = [{ text, date: nowStamp() }, ...(journal[code] || [])];
+    setJournal((prev) => ({ ...prev, [code]: entries }));
+    setJournalDraft((prev) => ({ ...prev, [code]: "" }));
+    const ok = await rpSet(`journal:${code}`, entries);
+    flash(ok, ok ? "Note saved" : "Saved locally — will sync when online");
+  };
+
+  const handleScroll = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const idx = Math.round(el.scrollLeft / el.clientWidth);
+    if (idx !== activeIndex && idx >= 0 && idx < PROJECTS.length) setActiveIndex(idx);
+  }, [activeIndex]);
+
+  const scrollToIndex = (idx) => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    el.scrollTo({ left: idx * el.clientWidth, behavior: "smooth" });
+    setActiveIndex(idx);
+    setShowAll(false);
+  };
+
+  return (
+    <div className="w-full flex flex-col overflow-hidden" style={{ background: "#12151B", fontFamily: "'Source Serif 4', Georgia, serif", height: "100dvh", minHeight: "480px" }}>
+      <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0">
+        <div className="flex items-baseline gap-2">
+          <span className="rp-mono text-xs px-2 py-1 rounded-sm" style={{ color: "#12151B", background: "#C89B3C", letterSpacing: "0.05em" }}>
+            {priorityLabel(PROJECTS[activeIndex].priority)}
+          </span>
+          <span className="rp-mono text-xs" style={{ color: "#8A93A3", letterSpacing: "0.05em" }}>
+            {rankLabel(PROJECTS[activeIndex].rank)} of Priority {PROJECTS[activeIndex].priority}
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          {syncStatus && (
+            <span className="rp-mono text-xs" style={{ color: syncStatus === "server" ? "#7FBF7F" : "#E0A868" }}>
+              {syncStatus === "server" ? "● synced" : "● local only"}
+            </span>
+          )}
+          <button onClick={() => setShowAll(true)} className="p-2 rounded-sm" style={{ color: "#8A93A3" }} aria-label="Show all projects">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          </button>
+        </div>
+      </div>
+
+      {saveStatus && (
+        <div className="mx-5 mb-2 px-3 py-1.5 rounded-sm rp-mono text-xs shrink-0" style={{ background: saveStatus.ok ? "rgba(200,155,60,0.15)" : "rgba(220,80,80,0.15)", color: saveStatus.ok ? "#C89B3C" : "#E08080", border: `1px solid ${saveStatus.ok ? "#C89B3C" : "#E08080"}` }}>
+          {saveStatus.msg}
+        </div>
+      )}
+
+      <div ref={scrollerRef} onScroll={handleScroll} className="rp-scroller flex-1 flex overflow-x-auto snap-x snap-mandatory" style={{ scrollBehavior: "smooth" }}>
+        {PROJECTS.map((p) => {
+          const projState = bulletState[p.code] || {};
+          const doneCount = Object.values(projState).filter((b) => b?.done).length;
+          const nextIdx = p.bullets.findIndex((_, bi) => !(projState[bi]?.done));
+          const photo = coverPhoto[p.code];
+          const entries = journal[p.code] || [];
+
+          return (
+            <div key={p.code} className="w-full h-full shrink-0 snap-center px-5 pb-5" style={{ minWidth: "100%" }}>
+              <div className="relative w-full h-full rounded-md flex flex-col" style={{ background: "#1C212B", border: "1px solid #3A4552" }}>
+                <div className="absolute -right-[1px] top-6 rp-mono text-xs px-2 py-3 rounded-l-sm" style={{ background: "#3A4552", color: "#E8E6DE", writingMode: "vertical-rl", letterSpacing: "0.15em", transform: "translateX(100%)" }}>
+                  {p.code}
+                </div>
+
+                <div className="px-6 pt-6 pb-4" style={{ borderBottom: "1px solid #3A4552" }}>
+                  <h1 className="rp-display text-2xl" style={{ color: "#E8E6DE", fontWeight: 600 }}>{p.name}</h1>
+                  <p className="rp-mono text-xs mt-2" style={{ color: "#C89B3C", letterSpacing: "0.03em" }}>{p.objective}</p>
+                </div>
+
+                <div className="flex items-center justify-between px-6 pt-4" style={{ borderBottom: "1px solid #3A4552" }}>
+                  <div className="flex gap-1">
+                    <button onClick={() => setTab("cover")} className="rp-display flex items-center gap-1.5 px-3 py-2 text-sm rounded-t-sm" style={{ color: tab === "cover" ? "#12151B" : "#8A93A3", background: tab === "cover" ? "#C89B3C" : "transparent", fontWeight: 500 }}>
+                      Cover
+                    </button>
+                    <button onClick={() => setTab("bullets")} className="rp-display flex items-center gap-1.5 px-3 py-2 text-sm rounded-t-sm" style={{ color: tab === "bullets" ? "#12151B" : "#8A93A3", background: tab === "bullets" ? "#C89B3C" : "transparent", fontWeight: 500 }}>
+                      Bullets
+                    </button>
+                    <button onClick={() => setTab("description")} className="rp-display flex items-center gap-1.5 px-3 py-2 text-sm rounded-t-sm" style={{ color: tab === "description" ? "#12151B" : "#8A93A3", background: tab === "description" ? "#C89B3C" : "transparent", fontWeight: 500 }}>
+                      Description
+                    </button>
+                  </div>
+                  {tab === "bullets" && (
+                    <span className="rp-mono text-xs pb-2" style={{ color: "#8A93A3" }}>{doneCount}/{p.bullets.length}</span>
+                  )}
+                </div>
+
+                <div className="flex-1 overflow-y-auto px-6 py-5">
+                  {tab === "cover" && (
+                    <div className="flex flex-col gap-5">
+                      <div>
+                        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handlePhotoUpload(p.code, e)} />
+                        <button onClick={() => fileInputRef.current?.click()} className="w-full rounded-sm overflow-hidden relative flex items-center justify-center" style={{ aspectRatio: "2 / 1", background: photo ? "transparent" : "#12151B", border: "1px dashed #3A4552" }}>
+                          {photo ? (
+                            <img src={photo} alt={`${p.name} cover`} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="flex flex-col items-center gap-2" style={{ color: "#8A93A3" }}>
+                              <span className="rp-mono text-xs">Add cover photo</span>
+                            </div>
+                          )}
+                        </button>
+                      </div>
+
+                      <div className="rounded-sm px-4 py-3" style={{ background: "#12151B", border: "1px solid #3A4552" }}>
+                        <div className="rp-mono text-xs mb-1.5" style={{ color: "#8A93A3", letterSpacing: "0.05em" }}>NEXT UP</div>
+                        {nextIdx === -1 ? (
+                          <div className="rp-display text-sm" style={{ color: "#C89B3C" }}>All bullets complete</div>
+                        ) : (
+                          <button onClick={() => toggleDone(p.code, nextIdx)} className="w-full flex items-center justify-between gap-3 text-left">
+                            <span className="rp-display text-sm" style={{ color: "#E8E6DE" }}>{p.bullets[nextIdx]}</span>
+                            <span style={{ color: "#C89B3C" }}>→</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <div>
+                        <div className="rp-mono text-xs mb-1.5" style={{ color: "#8A93A3", letterSpacing: "0.05em" }}>NOTES</div>
+                        <div className="flex gap-2 mb-3">
+                          <input type="text" value={journalDraft[p.code] || ""} onChange={(e) => setJournalDraft((prev) => ({ ...prev, [p.code]: e.target.value }))} onKeyDown={(e) => e.key === "Enter" && addJournalEntry(p.code)} placeholder="Add a note..." className="rp-notes flex-1 text-sm rounded-sm px-3 py-2" style={{ background: "#12151B", border: "1px solid #3A4552", color: "#C7CBD3", outline: "none" }} />
+                          <button onClick={() => addJournalEntry(p.code)} className="shrink-0 rounded-sm px-3 flex items-center justify-center rp-display" style={{ background: "#C89B3C", color: "#12151B", fontWeight: 700 }}>+</button>
+                        </div>
+                        <div className="space-y-2">
+                          {entries.length === 0 && <div className="rp-notes text-sm italic" style={{ color: "#6B7280" }}>No notes yet — add one as this project progresses.</div>}
+                          {entries.map((entry, ei) => (
+                            <div key={ei} className="rounded-sm px-3 py-2" style={{ background: "#181C24", border: "1px solid #262B36" }}>
+                              <div className="rp-mono text-xs mb-0.5" style={{ color: "#8A93A3" }}>{entry.date}</div>
+                              <div className="rp-notes text-sm" style={{ color: "#C7CBD3" }}>{entry.text}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {tab === "description" && <p className="text-base leading-relaxed" style={{ color: "#C7CBD3" }}>{p.description}</p>}
+
+                  {tab === "bullets" && (
+                    <ul className="space-y-1">
+                      {p.bullets.map((b, bi) => {
+                        const bs = projState[bi] || { done: false, doneDate: null, notes: "" };
+                        const key = `${p.code}-${bi}`;
+                        const isExpanded = !!expanded[key];
+                        return (
+                          <li key={bi} className="py-2" style={{ borderBottom: "1px solid #262B36" }}>
+                            <div className="flex items-start gap-3">
+                              <button onClick={() => toggleDone(p.code, bi)} className="mt-0.5 shrink-0 flex items-center justify-center rounded-sm" style={{ width: 18, height: 18, border: bs.done ? "none" : "1px solid #8A93A3", background: bs.done ? "#C89B3C" : "transparent" }} aria-label={bs.done ? "Mark not done" : "Mark done"}>
+                                {bs.done && <span style={{ color: "#12151B", fontSize: 12, fontWeight: 900 }}>✓</span>}
+                              </button>
+                              <button onClick={() => toggleExpand(p.code, bi)} className="flex-1 flex items-start justify-between gap-2 text-left">
+                                <span className="rp-display text-sm" style={{ color: bs.done ? "#6B7280" : "#E8E6DE", textDecoration: bs.done ? "line-through" : "none" }}>{b}</span>
+                                <span style={{ color: "#8A93A3" }}>{isExpanded ? "▲" : "▼"}</span>
+                              </button>
+                            </div>
+                            {bs.doneDate && <div className="rp-mono text-xs mt-1 ml-8" style={{ color: "#C89B3C" }}>Done {bs.doneDate}</div>}
+                            {isExpanded && (
+                              <div className="ml-8 mt-2">
+                                <textarea value={bs.notes} onChange={(e) => updateNotesLocal(p.code, bi, e.target.value)} onBlur={() => persistNotes(p.code, bi)} placeholder="Notes..." className="rp-notes w-full text-sm rounded-sm px-2 py-1.5 resize-none" rows={2} style={{ background: "#12151B", border: "1px solid #3A4552", color: "#C7CBD3", outline: "none" }} />
+                              </div>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-center gap-2 py-4 shrink-0">
+        {PROJECTS.map((p, i) => (
+          <button key={p.code} onClick={() => scrollToIndex(i)} className="rp-mono text-xs px-2 py-1 rounded-sm" style={{ color: i === activeIndex ? "#12151B" : "#8A93A3", background: i === activeIndex ? "#C89B3C" : "transparent", border: i === activeIndex ? "none" : "1px solid #3A4552" }}>
+            {p.code}
+          </button>
+        ))}
+      </div>
+
+      {showAll && (
+        <div className="fixed inset-0 z-50 flex flex-col" style={{ background: "rgba(18,21,27,0.97)" }}>
+          <div className="flex items-center justify-between px-5 pt-5 pb-3">
+            <h2 className="rp-display text-lg" style={{ color: "#E8E6DE", fontWeight: 600 }}>All Projects</h2>
+            <button onClick={() => setShowAll(false)} className="p-2" style={{ color: "#8A93A3" }} aria-label="Close">✕</button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-5 pb-5 space-y-2">
+            {PROJECTS.map((p, i) => {
+              const projState = bulletState[p.code] || {};
+              const doneCount = Object.values(projState).filter((b) => b?.done).length;
+              return (
+                <button key={p.code} onClick={() => scrollToIndex(i)} className="w-full text-left px-4 py-3 rounded-sm flex items-center justify-between" style={{ background: "#1C212B", border: "1px solid #3A4552" }}>
+                  <div className="flex items-center gap-3">
+                    <span className="rp-mono text-xs px-2 py-1 rounded-sm" style={{ color: "#12151B", background: "#C89B3C" }}>{priorityLabel(p.priority)}·{p.rank}</span>
+                    <span className="rp-display text-sm" style={{ color: "#E8E6DE" }}>{p.name}</span>
+                  </div>
+                  <span className="rp-mono text-xs" style={{ color: "#8A93A3" }}>{doneCount}/{p.bullets.length}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LoginScreen({ onSignedIn }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) {
+      setError(error.message || "Sign-in failed");
+    } else {
+      onSignedIn();
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="w-full flex items-center justify-center" style={{ background: "#12151B", height: "100dvh", fontFamily: "'Source Serif 4', Georgia, serif" }}>
+      <form onSubmit={submit} className="w-full max-w-sm px-6 py-8 rounded-md" style={{ background: "#1C212B", border: "1px solid #3A4552" }}>
+        <h1 className="rp-display text-xl mb-5" style={{ color: "#E8E6DE", fontWeight: 600 }}>Ranked Priority</h1>
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="w-full text-sm rounded-sm px-3 py-2 mb-3" style={{ background: "#12151B", border: "1px solid #3A4552", color: "#C7CBD3", outline: "none" }} />
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className="w-full text-sm rounded-sm px-3 py-2 mb-3" style={{ background: "#12151B", border: "1px solid #3A4552", color: "#C7CBD3", outline: "none" }} />
+        {error && <div className="rp-mono text-xs mb-3" style={{ color: "#E08080" }}>{error}</div>}
+        <button type="submit" disabled={busy} className="rp-display w-full text-sm px-4 py-2 rounded-sm" style={{ background: "#C89B3C", color: "#12151B", fontWeight: 500 }}>
+          {busy ? "Signing in..." : "Sign in"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function App() {
+  const [authed, setAuthed] = useState(null); // null = checking, false = not signed in, true = signed in
+
+  useEffect(() => {
+    sb.auth.getSession().then(({ data }) => setAuthed(!!data.session));
+    const { data: listener } = sb.auth.onAuthStateChange((_event, session) => {
+      setAuthed(!!session);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  if (authed === null) {
+    return <div style={{ background: "#12151B", height: "100dvh" }} />;
+  }
+  if (authed === false) {
+    return <LoginScreen onSignedIn={() => setAuthed(true)} />;
+  }
+  return <RankedPriority />;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
